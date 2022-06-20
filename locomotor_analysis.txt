@@ -1,0 +1,183 @@
+#first - run these
+#install.packages("zoo")
+#install.packages("tidyverse")
+#install.packages("hexbin")
+#install.packages("ggplot2")
+#install.packages("patchwork")
+#install.packages(RSQLite)
+#ibbrary(zoo)
+#library(tidyverse)
+#library(hexbin)
+#library(ggplot2)
+#library(hexbin)
+#library(patchwork)
+#library(RSQLite)
+
+#by default: reads .csv file from data_raw folder
+#if file is elsewhere: change path in the function
+#file name must be in quotation marks - eg read_file("Gad_KO_300_s7_d1")
+file_name <- ""
+path <- "data_raw/"
+extension_csv <- ".csv"
+directory <- paste(path, file_name, extension_csv, sep="", collapse=NULL)
+data_raw <- read.csv(directory)
+
+#set_parameters - this defines parameters for the analysis
+#frame_rate: number of frames per second in the video
+#px_in_mm: real value of a pixel in milimeters - eg 2 px in the video is 1 mm in real life
+#filtering_window: value for running average; how many frames should be averaged to calculate position
+#other variables allow to extract information from file name - they are indexes of letters in file name
+#if file name is Gad_KO_100_s7_d1, then letters 1,2,3 are mouse line: mouse_line <- substr(file_name,1,3)
+#if file name is Gad_KO_100_s7_d1, then letters 5,6 are genotype: mouse_genotype <- substr(file_name,5,6) etc.
+#if file name does not contain the information: mouse_genotype <- "unknown"
+#do not leave variables empty
+frame_rate <- 0
+px_in_mm <- 0
+filtering_window <- 0
+mouse_line <- substr(file_name,0,0)
+mouse_genotype <- substr(file_name,0,00)
+mouse_id <- substr(file_name,0,0)
+mouse_protocol_type <- substr(file_name,0,0)
+mouse_protocol_day <- substr(file_name,0,0)
+
+#filtering raw data
+data_no_NaN <- na.omit(data_raw) #deletes NaN in data imported from .csv file
+data <- zoo::rollmean(data_no_NaN, filtering_window) #running average to filter out the noise
+
+#outputs: lenght of video in minutes
+recording_time_minutes <- (nrow(data)/frame_rate)/60
+
+#outputs: distance in meters
+euclidean_distance <- sqrt((data[2:length(data[,1]),1] - data[1:length(data[,1])-1,1])^2 + (data[2:length(data[,2]),2] - data[1:length(data[,2])-1,2])^2) #returns vector with distance in pixels
+distance_meters_summary <- (sum(euclidean_distance)/px_in_mm)/1000 #returns a value in meters
+
+#outputs: velocity
+data_frame_euclidean_px <- data.frame(euclidean_distance) #data frame with distance in px
+data_frame_euclidean_distance <- data.frame(data_frame_euclidean_px[,1]/px_in_mm/1000) #data frame with distance in meters
+data_frame_euclidean_distance  <- setNames(data_frame_euclidean_distance, c("distance")) #add column name
+distance_centimeters <- euclidean_distance/px_in_mm/10 #vector with distance in centimeters
+velocity <-  zoo::rollsum(distance_centimeters, frame_rate) #vector with average distance over 1s (frame rate)
+data_frame_velocity <- data.frame(velocity)
+
+#concatinating data frames
+#result: data frame with X coordinates, Y coordinates, time in minutes, distance and velocity for each frame
+data_frame_euclidean_distance_adjusted <- data_frame_euclidean_distance[1:nrow(data_frame_velocity),1]
+data_adjusted <- data[1:nrow(data_frame_velocity),]
+timestamp <- 1:nrow(data_frame_velocity)
+data_frame_time <- data.frame(timestamp)
+data_frame_minutes <- (data_frame_time/frame_rate)/60
+data_frame_collected <- cbind(data_adjusted,data_frame_minutes, data_frame_euclidean_distance_adjusted, data_frame_velocity)
+data_frame_collected <- setNames(data_frame_collected, c("X","Y","time","distance [m]","velocity [cm/s"))
+
+#output: means
+min(velocity)
+mean(velocity)
+median(velocity)
+max(velocity)
+
+#create results from each recording to be exported
+output_categories <- c("mouse_line", "mouse_genotype", "mouse_id", "mouse_protocol_type",
+                       "mouse_protocol_day", "recording_time_minutes", "distance_meters_summary",
+                       "min(velocity)", "mean(velocity)", "median(velocity)", "max(velocity)", "frame_rate",
+                       "px_in_mm", "filtering_window")
+output_categories_dataframe <- data.frame(output_categories)
+mouse_results <- c(mouse_line, mouse_genotype, mouse_id, mouse_protocol_type,
+                   mouse_protocol_day, recording_time_minutes, distance_meters_summary,
+                   min(velocity), mean(velocity), median(velocity), max(velocity), frame_rate,
+                   px_in_mm, filtering_window)
+mouse_results_dataframe <- data.frame(mouse_results)
+
+#create new file for results - ONLY ONCE!
+results <- cbind(output_categories_dataframe, mouse_results_dataframe)
+
+#add results to the file
+results <- cbind(results, mouse_results_dataframe)
+
+#save file - after finishing all recordings
+x <- runif(1)
+name=paste("data/", "results_",x,".csv",sep="", collapse=NULL)
+write.csv(results, file=name)
+
+
+#---------------------------------------- plots
+#to extract only plot lines without axis etc- use theme_void
+
+
+
+#plot: route in cage and save in figures/ as .png
+#themes to check: theme_minimal, theme_void
+graph_title <- paste(mouse_line,mouse_genotype,mouse_id,mouse_protocol_type,mouse_protocol_day, sep=" ", collapse=NULL)
+figure_cage <- ggplot2::ggplot(data_frame_collected)+
+  ggplot2::geom_path(ggplot2::aes(x=X, y=Y, ))+
+  ggplot2::labs(x="", y="", colour="", title=graph_title)+
+  ggplot2::theme_minimal()
+print(figure_cage)
+extension <- ".png"
+path_save <- "figures/"
+x <- runif(1)
+save_cage_name <- paste(path_save,file_name, "_cage_",x,extension, sep="", collapse=NULL)
+ggplot2::ggsave(save_cage_name, figure_cage, dpi=300)
+
+
+#plot: route in cage with velocity and save in figures/ as .png
+#velocity: colours and range of scaling can be adjusted
+#themes to check: theme_minimal, theme_void
+graph_title <- paste(mouse_line,mouse_genotype,mouse_id,mouse_protocol_type,mouse_protocol_day, sep=" ", collapse=NULL)
+figure_cage_velocity <- ggplot2::ggplot(data_frame_collected)+
+  ggplot2::geom_path(ggplot2::aes(x=X, y=Y,colour = as.numeric(velocity)))+
+  ggplot2::scale_color_gradientn(colours=c(low="blue", high="red"),limits=c(0,30))+
+  ggplot2::labs(x="", y="", colour="", title=graph_title)+
+  ggplot2::theme_minimal()
+print(figure_cage_velocity)
+extension <- ".png"
+path_save <- "figures/"
+x <- runif(1)
+save_cage_velocity_name <- paste(path_save,file_name, "_cage_velocity",x,extension, sep="", collapse=NULL)
+ggplot2::ggsave(save_cage_velocity_name, figure_cage_velocity, dpi=300)
+
+#plot histogram of velocity and save in figures/ as .png
+graph_title <- paste(mouse_line,mouse_genotype,mouse_id,mouse_protocol_type,mouse_protocol_day, sep=" ", collapse=NULL)
+figure_histogram <- ggplot2::ggplot(data_frame_collected)+
+  ggplot2::geom_histogram(bins = 50, ggplot2::aes(x=velocity))+
+  ggplot2::scale_color_gradientn(colours=c(low="blue", high="red"),limits=c(0,30))+
+  ggplot2::xlim(0,30)+
+  ggplot2::labs(x="velocity [cm/s]", y="counts",title=graph_title)+
+  ggplot2::theme_classic()
+print(figure_histogram)
+x <- runif(1)
+extension <- ".png"
+path_save <- "figures/"
+save_histogram_name <- paste(path_save,file_name, "_histogram",x,extension, sep="", collapse=NULL)
+#print(save_histogram_name)
+ggplot2::ggsave(save_histogram_name, figure_histogram, dpi=300)
+
+#plot velocity over time - LINE - and save in figures/ as .png
+graph_title <- paste(mouse_line,mouse_genotype,mouse_id,mouse_protocol_type,mouse_protocol_day, sep=" ", collapse=NULL)
+figure_velocity <- ggplot2::ggplot(data_frame_collected)+
+  ggplot2::geom_line(ggplot2::aes(x=time, y=velocity,colour = as.numeric(velocity)))+
+  ggplot2::ylim(0,30)+
+  ggplot2::scale_color_gradientn(colours=c(low="blue", high="red"),limits=c(0,30))+
+  ggplot2::labs(x="time [min]", y="velocity[cm/s]", colour="velocity [cm/s]", title=graph_title)+
+  ggplot2::theme_minimal()
+print(figure_velocity)
+extension <- ".png"
+path_save <- "figures/"
+x <- runif(1)
+save_velocity <- paste(path_save,file_name, "_velocity",x, extension, sep="", collapse=NULL)
+ggplot2::ggsave(save_velocity, figure_velocity, dpi=300)
+
+#plot velocity over time - SMOOTH - and save in figures/ as .png
+#velocity: colours and range of scaling can be adjusted
+graph_title <- paste(mouse_line,mouse_genotype,mouse_id,mouse_protocol_type,mouse_protocol_day, sep=" ", collapse=NULL)
+figure_velocity <- ggplot2::ggplot(data_frame_collected)+
+  ggplot2::geom_smooth(ggplot2::aes(x=time, y=velocity,colour = as.numeric(velocity)))+
+  ggplot2::ylim(0,30)+
+  ggplot2::scale_color_gradientn(colours=c(low="blue", high="red"),limits=c(0,30))+
+  ggplot2::labs(x="time [min]", y="velocity[cm/s]", colour="velocity [cm/s]", title=graph_title)+
+  ggplot2::theme_minimal()
+print(figure_velocity)
+extension<- ".png"
+path_save <- "figures/"
+x <- runif(1)
+save_velocity <- paste(path_save,file_name, "_velocity",x, extension, sep="", collapse=NULL)
+ggplot2::ggsave(save_velocity, figure_velocity, dpi=300)
